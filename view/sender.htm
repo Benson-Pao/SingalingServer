@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebRTC Sender</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+
+        #localVideo {
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            position: absolute;
+            top: 0;
+            left: 0;
+            z-index: 0;
+        }
+
+        #start {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 1;
+            padding: 10px 20px;
+            font-size: 16px;
+        }
+    </style>
+</head>
+
+<body>
+    <button id="start">Start Sharing</button>
+    <video id="localVideo" autoplay muted></video>
+
+    <script type="module">
+        import Lock from "./js/lock.js";
+        import WebRTC from "./js/webrtc.js";
+
+        const lock = new Lock();
+        const map = new Map(); // 存放連線申請者
+
+        const domain = 'localhost:8080';
+        const apiUrl = `http://${domain}`;
+        const wsUrl = `ws://${domain}/ws`;
+
+        let accessToken;
+        let refreshToken;
+        let localStream;
+        let ws;
+
+        const localVideo = document.getElementById('localVideo');
+        const startButton = document.getElementById('start');
+
+        /**
+         * Token 管理模組
+         */
+        const TokenManager = {
+            async init() {
+                try {
+                    const response = await fetch(`${apiUrl}/create/1`);
+                    const data = await response.json();
+
+                    accessToken = data.access_token;
+                    refreshToken = data.refresh_token;
+
+                    if (!accessToken || !refreshToken) {
+                        throw new Error('Failed to retrieve tokens.');
+                    }
+                } catch (error) {
+                    console.error('Error initializing tokens:', error);
+                }
+            },
+
+            isAccessTokenExpired() {
+                const decodedToken = JSON.parse(atob(accessToken.split('.')[1]));
+                return Date.now() >= decodedToken.exp * 1000;
+            },
+
+            async refreshAccessToken() {
+                try {
+                    const response = await fetch(`${apiUrl}/refresh`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ refresh_token: refreshToken })
+                    });
+
+                    const data = await response.json();
+                    if (!data.access_token) {
+                        throw new Error('Token refresh failed.');
+                    }
+
+                    accessToken = data.access_token;
+                } catch (error) {
+                    console.error('Error refreshing access token:', error);
+                }
+            },
+        };
+
+        /**
+         * WebSocket 管理模組
+         */
+        const WebSocketManager = {
+            connect() {
+                ws = new WebSocket(`${wsUrl}?token=${accessToken}`);
+
+                ws.onopen = () => console.log('WebSocket connected');
+                ws.onmessage = (message) => this.handleMessage(JSON.parse(message.data));
+                ws.onerror = (error) => console.error('WebSocket Error:', error);
+                ws.onclose = () => console.log('WebSocket closed');
+            },
+
+            sendSignal(type, data) {
+                let json = JSON.stringify({ type, token: accessToken, ...data })
+                console.log("sendSignal:", json)
+
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(json);
+                } else {
+                    console.warn('WebSocket is not open. Retry in 500ms.');
+                    setTimeout(() => this.sendSignal(type, data), 500);
+                }
+            },
+
+            handleMessage(data) {
+                console.log('WebSocket message received:', data);
+                switch (data.type) {
+                    case 'offer':
+                        WebRTCManager.handleOffer(data);
+                        break;
+                    case 'answer':
+                        WebRTCManager.handleAnswer(data);
+                        break;
+                    case 'candidate':
+                        WebRTCManager.handleCandidate(data);
+                        break;
+                    default:
+                        console.warn('Unknown WebSocket message type:', data.type);
+                }
+            },
+        };
+
+        /**
+         * WebRTC 管理模組
+         */
+        const WebRTCManager = {
+            async startLocalStream() {
+                try {
+                    localStream = await navigator.mediaDevices.getDisplayMedia({
+                        video: { cursor: 'motion' },
+                    });
+                    localVideo.srcObject = localStream;
+                } catch (error) {
+                    console.error('Error accessing display media:', error);
+                }
+            },
+
+            async handleOffer(offer) {
+                console.log("Handle offer:", JSON.stringify(offer))
+                lock.acquire();
+                let webrtc = map.get(offer.userMessage.sender);
+
+                if (!webrtc) {
+                    webrtc = new WebRTC();
+                    map.set(offer.userMessage.sender, webrtc);
+                }
+                lock.release();
+
+                try {
+                    // 將本地流的所有 track 添加到 peerConnection
+                    if (webrtc.peerConnection) {
+                        localStream.getTracks().forEach(track => {
+                            console.log('Adding track:', track);
+                            //webrtc.peerConnection.addTrack(track, localStream);
+                            // 檢查 track 是否已經被添加過
+                            const senders = webrtc.peerConnection.getSenders();
+                            const isTrackAdded = senders.some(sender => sender.track === track);
+
+                            if (!isTrackAdded) {
+                                // 如果 track 沒有被添加過，才進行添加
+                                webrtc.peerConnection.addTrack(track, localStream);
+                            } else {
+                                console.log('Track already added:', track);
+                            }
+                        });
+                    } else {
+                        console.log("webrtc.peerConnection" + webrtc.peerConnection);
+                    }
+                    if (webrtc.isRemoteDescriptionSet) {
+                        console.log('Remote description already set, skipping.');
+                        return;
+                    }
+
+                    //console.log("discription:" + JSON.stringify(offer.offer))
+
+                    await webrtc.setRemoteDescription(new RTCSessionDescription(offer.offer));
+                    const answer = await webrtc.createAnswer();
+                    await webrtc.setLocalDescription(answer);
+
+                    //console.log("answer:" + JSON.stringify(answer));
+
+                    const userMessage = {
+                        target: offer.userMessage.sender,
+                    }
+
+                    WebSocketManager.sendSignal('answer', { offer: answer, userMessage: userMessage });
+
+                    webrtc.peerConnection.oniceconnectionstatechange = () => {
+                        console.log('ICE Connection State:', webrtc.peerConnection.iceConnectionState);
+                    };
+
+                    webrtc.peerConnection.onicegatheringstatechange = () => {
+                        console.log('ICE Gathering State:', webrtc.peerConnection.iceGatheringState);
+                    };
+
+                    // 開始處理 ICE candidates，並發送候選鍵
+                    webrtc.peerConnection.onicecandidate = (event) => {
+                        if (event.candidate) {
+                            const candidate = {
+                                candidate: event.candidate.candidate,
+                                sdpMid: event.candidate.sdpMid,
+                                sdpMLineIndex: event.candidate.sdpMLineIndex,
+                            };
+
+                            console.log("candidate", event.candidate);
+                            // 發送 ICE candidate
+                            WebSocketManager.sendSignal('candidate', { candidate: candidate, userMessage: userMessage });
+                        } else {
+                            console.log('ICE candidate gathering complete.');
+                        }
+                    };
+                    //console.log(webrtc.peerConnection.signalingState)
+                    //console.log(webrtc.peerConnection.iceGatheringState);
+                } catch (error) {
+                    console.error('Error handling offer:', error);
+                }
+            },
+
+            handleAnswer(answer) {
+                console.log('Handle answer:', answer);
+                try {
+                    let webrtc = map.get(offer.userMessage.sender);
+                    const remoteDesc = new RTCSessionDescription(answer.offer);
+                    webrtc.peerConnection.setRemoteDescription(remoteDesc)
+                        .then(() => {
+                            console.log('Remote description set successfully.');
+                        })
+                        .catch(error => {
+                            console.error('Error setting remote description:', error);
+                        });
+                } catch (error) {
+                    console.error('Error handling answer:', error);
+                }
+            },
+
+            handleCandidate(candidate) {
+                console.log('Handle candidate:', candidate);
+                try {
+                    let webrtc = map.get(offer.userMessage.sender);
+                    const iceCandidate = new RTCIceCandidate(candidate.candidate);
+                    webrtc.peerConnection.addIceCandidate(iceCandidate)
+                        .then(() => {
+                            console.log('ICE candidate added successfully.');
+                        })
+                        .catch(error => {
+                            console.error('Error adding ICE candidate:', error);
+                        });
+                } catch (error) {
+                    console.error('Error handling candidate:', error);
+                }
+            },
+        };
+
+        /**
+         * 初始化程式
+         */
+        async function initApp() {
+            await TokenManager.init();
+
+            startButton.addEventListener('click', async () => {
+                if (TokenManager.isAccessTokenExpired()) {
+                    await TokenManager.refreshAccessToken();
+                }
+
+                await WebRTCManager.startLocalStream();
+                WebSocketManager.connect();
+            });
+        }
+
+        window.onload = initApp;
+    </script>
+</body>
+
+</html>
