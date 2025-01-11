@@ -19,6 +19,7 @@ import (
 var (
 	secretKey string
 	port      string
+	domain    string
 )
 
 func init() {
@@ -26,6 +27,7 @@ func init() {
 
 	flag.StringVar(&secretKey, "k", "d97ff91633ae386905cfe4230361fb0eb7c1083aba29ddf1ce21bbad3339fa82", "JWT 簽名的密鑰")
 	flag.StringVar(&port, "p", ":8080", "Web監聽Port")
+	flag.StringVar(&domain, "d", "localhost", "Web Domain")
 	flag.Parse()
 
 	// 使用環境變數讀取密鑰(環境變數優先)
@@ -36,6 +38,16 @@ func init() {
 	// 防止用戶設置空值
 	if secretKey == "" {
 		log.Fatal("密鑰不能為空，請通過 -key 提供有效的密鑰")
+	}
+
+	// 防止用戶設置domain空值
+	if domain == "" {
+		log.Fatal("domain不能為空，請通過 -d 提供有效的domain")
+	}
+
+	// 防止用戶設置Port空值
+	if port == "" {
+		log.Fatal("Port不能為空，請通過 -p 提供有效的Port")
 	}
 }
 
@@ -62,12 +74,18 @@ func main() {
 
 	r.GET("/sender", func(c *gin.Context) {
 		// sender.htm 頁面
-		c.HTML(http.StatusOK, "sender.htm", nil)
+		c.HTML(http.StatusOK, "sender.htm", gin.H{
+			"domain": domain,
+			"port":   port,
+		})
 	})
 
 	r.GET("/receiver", func(c *gin.Context) {
 		// receiver.htm 頁面
-		c.HTML(http.StatusOK, "receiver.htm", nil)
+		c.HTML(http.StatusOK, "receiver.htm", gin.H{
+			"domain": domain,
+			"port":   port,
+		})
 	})
 
 	// 啟動廣播 Goroutine

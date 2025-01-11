@@ -43,7 +43,7 @@
         const lock = new Lock();
         const map = new Map(); // 存放連線申請者
 
-        const domain = 'localhost:8080';
+        const domain = "{{.domain}}{{.port}}";
         const apiUrl = `http://${domain}`;
         const wsUrl = `ws://${domain}/ws`;
 
