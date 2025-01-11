@@ -2,7 +2,7 @@
 # Signaling Server with JWT Authentication and WebRTC Communication
 
 ## 簡介
-本專案主要功能為信令伺服器，以WebRTC 將畫面擷取為影音傳送至另一個使用者做為影音傳遞，並利用WebSocket做為信令傳送達成WebRTC信令交換使用，其中還透過JWT為Http與WebSocket驗證存取權限。
+本專案主要功能為信令伺服器，以WebRTC 將畫面擷取為影音傳送至另一個使用者做為影音傳遞，利用WebSocket做為信令傳送達成WebRTC信令交換使用，並透過JWT為web與WebSocket驗證存取權限。
 ```
 此段程試因測試方便用僅單一影片提供者(為第一個戴入sender的user)
 若要變動可修改下列
@@ -29,7 +29,7 @@ case "offer":
 	castMessage(clientInfo, msg)
 
             
----
+```
 
 此專案的主要功能是：
 
@@ -139,23 +139,23 @@ case "offer":
 -   `candidate`：WebRTC 中的 ICE candidate，表示可能的網路路徑。
 
 ## 目錄結構`.
-
+```
 
 ├── main.go                 # Go 設定 WebSocket 與 HTTP 伺服器
 ├── view/
 │   ├── receiver.htm        # 接收端測試頁面 (視頻接收者)
 │   ├── sender.htm          # 發送端測試頁面 (視頻發送者)
 ├── js/
-│    ├──  webrtc.js         # WebRTC 邏輯 (建立連線與訊號處理)
-│    └──  lock.js           # js lock
+│   ├── webrtc.js           # WebRTC 邏輯 (建立連線與訊號處理)
+│   └── lock.js             # js lock
 ├──-conn/                
-│		└── ws.go			#  信令相關處理 (WebSocket)
+│		└── ws.go			# 信令相關處理 (WebSocket)
 ├── util/                           
-│		└── Sonyflake.go	#  生成 ID
+│	└── Sonyflake.go	    # 生成 ID
 ├── jwt/
-		└── token.go		#  JWT
+	└── token.go		    # JWT
 
-
+```
 ## 注意事項
 
 -   **WebSocket 連接**：請確保伺服器已啟動並正確配置，才能讓客戶端進行信號交換。
